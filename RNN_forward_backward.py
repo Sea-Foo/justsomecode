@@ -32,9 +32,9 @@ class RNN:
         self.h = np.zeros((seq_len + 1, self.hidden_dim))
         self.y_hat = np.zeros((seq_len, self.output_dim))
         for t in range(seq_len):
-            z = np.dot(x[t], self.W) + np.dot(h[t-1], self.U) + self.b
+            z = np.dot(x[t], self.W) + np.dot(self.h[t-1], self.U) + self.b
             self.h[t] = np.tanh(z)
-            o = np.dot(h[t], self.V) + self.c
+            o = np.dot(self.h[t], self.V) + self.c
             self.y_hat[t] = self.softmax(o)
         return self.y_hat
 
@@ -68,15 +68,17 @@ class RNN:
             # dV (hidden_dim, output_dim)
             # dy (output_dim,)
             # h[t] (hidden_dim,)
-            dV += np.outer(h[t], dy)
+            dV += np.outer(self.h[t], dy)
             dc += dy
 
-            dh = np.dot(self.V, dy) + dz_next * U
-            dz
+            dh = np.dot(self.V, dy) + np.dot(self.U, dz_next)
+            dz = (1 - self.h[t] ** 2) * dh
 
             dW += np.outer(x[t], dz)
-            dU += np.outer(h[t-1], dz)
+            dU += np.outer(self.h[t-1], dz)
             db += dz
+
+            dz_next = dz
 
         self.V -= learning_rate * dV
         self.c -= learning_rate * dc
@@ -87,15 +89,13 @@ class RNN:
     def train(self, x, y, epochs=10, learning_rate=0.01):
         for epoch in range(epochs):
             y_hat = self.forward(x)
-            loss = self.total_loss(y, y_hat)
+            loss = self.total_loss(y_hat, y)
             print('Epoch: {}, Loss: {}'.format(epoch, loss))
-            self.backwards()
+            self.backwards(y, y_hat, learning_rate)
 
 if __name__ == '__main__':
     rnn = RNN(2, 3, 2)
-    x = np.array([[1, 2], [3, 4], [5, 6]])
-    labels = np.array([[1, 0], [1, 0], [1, 0]])
-    y_hat = rnn.forward(x)
-    print(y_hat)
+    x = np.array([[0, 1], [1, 0], [0, 0]])
+    labels = np.array([[1, 0], [0, 1], [1, 0]])
+    rnn.train(x, labels)
     print(rnn.predict(x))
-    print(rnn.total_loss(y_hat, labels))
