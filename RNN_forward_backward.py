@@ -12,9 +12,9 @@ class RNN:
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
-        self.W = np.random.randn(self.input_dim, self.hidden_dim)
-        self.U = np.random.randn(self.hidden_dim, self.hidden_dim)
-        self.V = np.random.randn(self.hidden_dim, self.output_dim)
+        self.W = np.random.randn(self.input_dim, self.hidden_dim)*0.01
+        self.U = np.random.randn(self.hidden_dim, self.hidden_dim)*0.01
+        self.V = np.random.randn(self.hidden_dim, self.output_dim)*0.01
         self.b = np.zeros(self.hidden_dim)
         self.c = np.zeros(self.output_dim)
 
@@ -29,6 +29,7 @@ class RNN:
         # o: (seq_len, output_dim)
         # y_hat: (seq_len, output_dim)
         seq_len = x.shape[0]
+        self.x = x
         self.h = np.zeros((seq_len + 1, self.hidden_dim))
         self.y_hat = np.zeros((seq_len, self.output_dim))
         for t in range(seq_len):
@@ -43,7 +44,8 @@ class RNN:
         return np.argmax(y_hat, axis=1)
 
     def loss(self, y, y_hat):
-        return - np.sum(y * np.log(y_hat))
+        loss = - np.sum(np.log(y.T.dot(y_hat)))
+        return loss
 
     def total_loss(self, Y, labels):
         seq_len = Y.shape[0]
@@ -52,7 +54,7 @@ class RNN:
             total_loss += self.loss(labels[t], Y[t])
         return total_loss
 
-    def backwards(self, y, y_hat, learning_rate):
+    def backwards(self, y, y_hat):
         T = y.shape[0]
         
         dW = np.zeros_like(self.W)
@@ -74,28 +76,82 @@ class RNN:
             dh = np.dot(self.V, dy) + np.dot(self.U, dz_next)
             dz = (1 - self.h[t] ** 2) * dh
 
-            dW += np.outer(x[t], dz)
+            dW += np.outer(self.x[t], dz)
             dU += np.outer(self.h[t-1], dz)
             db += dz
 
             dz_next = dz
+        
+        for dparam in [dW, dU, dV, db, dc]:
+            np.clip(dparam, -5, 5, out=dparam)
 
-        self.V -= learning_rate * dV
-        self.c -= learning_rate * dc
-        self.W -= learning_rate * dW
-        self.U -= learning_rate * dU
-        self.b -= learning_rate * db
+        self.dW = dW
+        self.dU = dU
+        self.dV = dV
+        self.db = db
+        self.dc = dc
 
-    def train(self, x, y, epochs=10, learning_rate=0.01):
+    def step(self, learning_rate):
+
+        self.V -= learning_rate * self.dV
+        self.c -= learning_rate * self.dc
+        self.W -= learning_rate * self.dW
+        self.U -= learning_rate * self.dU
+        self.b -= learning_rate * self.db
+
+    def train(self, x, y, epochs=10, learning_rate=0.03):
         for epoch in range(epochs):
-            y_hat = self.forward(x)
-            loss = self.total_loss(y_hat, y)
-            print('Epoch: {}, Loss: {}'.format(epoch, loss))
-            self.backwards(y, y_hat, learning_rate)
+            batch_size = x.shape[0]
+            loss = 0
+            for i in range(batch_size):
+                x_batch = x[i]
+                y_batch = y[i]
+                y_hat = self.forward(x_batch)
+                loss += self.total_loss(y_hat, y_batch)
+                self.backwards(y_batch, y_hat)
+                self.step(learning_rate)
+                self.gradient_check(x_batch, y_batch)
+            print('Epoch: {}, Loss: {}'.format(epoch, loss / batch_size))
+
+    def gradient_check(self, x, y, epsilon=1e-5):
+        W_orig = self.W.copy()
+        U_orig = self.U.copy()
+        V_orig = self.V.copy()
+        b_orig = self.b.copy()
+        c_orig = self.c.copy()
+
+        y_hat = self.forward(x)
+        loss_orig = self.total_loss(y_hat, y)
+        self.backwards(y, y_hat)
+
+        dW_analytic = self.dW
+        dW_numeric = np.zeros_like(self.W)
+        for i in range(self.W.shape[0]):
+            for j in range(self.W.shape[1]):
+                self.W[i, j] = W_orig[i, j] + epsilon
+                y_hat = self.forward(x)
+                loss_plus = self.total_loss(y_hat, y)
+
+                self.W[i, j] = W_orig[i, j] - epsilon
+                y_hat = self.forward(x)
+                loss_minus = self.total_loss(y_hat, y)
+
+                dW_numeric[i, j] = (loss_plus - loss_minus) / (2 * epsilon)
+                self.W[i, j] = W_orig[i, j]
+        
+        def rel_error(x, y):
+            return np.max(np.abs(x - y) / (np.maximum(1e-8, np.abs(x) + np.abs(y))))
+
+        print('dW error: ', rel_error(dW_analytic, dW_numeric))
 
 if __name__ == '__main__':
-    rnn = RNN(2, 3, 2)
-    x = np.array([[0, 1], [1, 0], [0, 0]])
-    labels = np.array([[1, 0], [0, 1], [1, 0]])
-    rnn.train(x, labels)
-    print(rnn.predict(x))
+    s1 = '你 好 李 焕 英'
+    s2 = '夏 洛 特 烦 恼'
+    vocab_size= len(s1.split(' ')) + len(s2.split(' '))
+    vocab = [[0] * vocab_size for _ in range(vocab_size)]
+    for i in range(vocab_size): vocab[i][i] = 1
+    x_sample = np.array([vocab[:5]] + [vocab[5:]])
+    labels = np.array([vocab[1:6]] + [vocab[6:]+[vocab[0]]])
+    rnn = RNN(10, 20, 10)
+    rnn.train(x_sample, labels)
+    # rnn.gradient_check(x_sample[0], labels[0])
